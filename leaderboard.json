@@ -1,0 +1,44 @@
+{
+  "all_time": [
+    {
+      "name": "Predikoutkastaren",
+      "words_collected": 3,
+      "time": 61,
+      "timestamp": "2025-10-02T15:32:46.396660"
+    },
+    {
+      "name": "Stärkt",
+      "words_collected": 2,
+      "time": 48,
+      "timestamp": "2025-10-02T15:35:26.359347"
+    },
+    {
+      "name": "Drake",
+      "words_collected": 3,
+      "time": 53,
+      "timestamp": "2025-10-02T15:41:16.329490"
+    }
+  ],
+  "daily": {
+    "2025-10-02": [
+      {
+        "name": "Predikoutkastaren",
+        "words_collected": 3,
+        "time": 61,
+        "timestamp": "2025-10-02T15:32:46.396660"
+      },
+      {
+        "name": "Stärkt",
+        "words_collected": 2,
+        "time": 48,
+        "timestamp": "2025-10-02T15:35:26.359347"
+      },
+      {
+        "name": "Drake",
+        "words_collected": 3,
+        "time": 53,
+        "timestamp": "2025-10-02T15:41:16.329490"
+      }
+    ]
+  }
+}

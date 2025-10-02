@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ordlabyrint Spel</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        #startScreen {
+            max-width: 600px;
+            background: #16213e;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        h1 {
+            color: #0f3460;
+            text-align: center;
+            margin-top: 0;
+        }
+
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 10px;
+            border: 2px solid #0f3460;
+            border-radius: 5px;
+            font-size: 14px;
+            background: #0f3460;
+            color: #eee;
+            resize: vertical;
+        }
+
+        button {
+            width: 100%;
+            padding: 15px;
+            margin-top: 15px;
+            font-size: 18px;
+            background: #e94560;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        button:hover {
+            background: #c23050;
+        }
+
+        #gameContainer {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        canvas {
+            border: 3px solid #0f3460;
+            background: #0f3460;
+            margin-top: 20px;
+        }
+
+        #gameInfo {
+            margin-top: 15px;
+            font-size: 18px;
+            text-align: center;
+        }
+
+        #status {
+            margin-top: 10px;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .instructions {
+            margin-top: 15px;
+            padding: 15px;
+            background: #0f3460;
+            border-radius: 5px;
+            line-height: 1.6;
+        }
+
+        .win {
+            color: #4caf50;
+        }
+
+        .lose {
+            color: #e94560;
+        }
+    </style>
+</head>
+<body>
+    <div id="startScreen">
+        <h1>⛪ Preacher Panic</h1>
+        <div class="instructions">
+            <p><strong>Instruktioner:</strong></p>
+            <ul>
+                <li>Använd piltangenterna för att röra dig genom församlingslabyrinten</li>
+                <li>Ta dig dig igenom predikotexten i rätt ordning genom att gå mot väggen med ordet</li>
+                <li>När du bearbetat alla ord, gå till kyrkan längst till höger</li>
+                <li>Varje bearbetat ord spawnar en ny församlingsmedlem som vill dig något - undvik dem!</li>
+                <li>Klara alla 10 nivåer!</li>
+            </ul>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px;">
+            <div style="background: #0f3460; padding: 15px; border-radius: 5px;">
+                <h3 style="margin-top: 0; color: #e94560;">🏆 Dagens Topplista</h3>
+                <ol id="dailyLeaderboard" style="padding-left: 20px; margin: 0;">
+                    <li>Laddar...</li>
+                </ol>
+            </div>
+            <div style="background: #0f3460; padding: 15px; border-radius: 5px;">
+                <h3 style="margin-top: 0; color: #e94560;">👑 All-Time Topplista</h3>
+                <ol id="allTimeLeaderboard" style="padding-left: 20px; margin: 0;">
+                    <li>Laddar...</li>
+                </ol>
+            </div>
+        </div>
+
+        <button onclick="startGame()" style="margin-top: 20px;">Starta Level 1</button>
+    </div>
+
+    <div id="gameContainer">
+        <div style="display: flex; justify-content: space-between; width: 1200px; margin-bottom: 10px; color: #eee; font-size: 18px;">
+            <div id="timer">Tid: 0:00</div>
+            <div id="score">Ord: 0</div>
+        </div>
+        <canvas id="gameCanvas" width="1200" height="850"></canvas>
+        <div id="gameInfo">
+            <div id="status"></div>
+            <button onclick="restartGame()" style="max-width: 300px;">Nytt Spel</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        let maze = null;
+        let player = null;
+        let monsters = [];
+        let cellSize = 50;
+        let gameOver = false;
+        let won = false;
+        let collectedWords = [];
+        let currentWordIndex = 0;
+        let animationProgress = 0;
+        let isAnimating = false;
+        let levels = [];
+        let currentLevel = 0;
+        let monsterSprites = [];
+        let spritesLoaded = false;
+        let gameStartTime = 0;
+        let totalWordsCollected = 0;
+        let timerInterval = null;
+
+        // Sprite images
+        const playerSprite = new Image();
+        playerSprite.src = '/static/player.png';
+
+        const goalSprite = new Image();
+        goalSprite.src = '/static/goal.png';
+
+        // Track sprite loading
+        let loadedSprites = 0;
+        const totalBaseSprites = 2; // player + goal
+
+        playerSprite.onload = () => {
+            loadedSprites++;
+            checkSpritesLoaded();
+        };
+
+        goalSprite.onload = () => {
+            loadedSprites++;
+            checkSpritesLoaded();
+        };
+
+        function checkSpritesLoaded() {
+            if (loadedSprites >= totalBaseSprites && monsterSprites.length > 0) {
+                spritesLoaded = true;
+            }
+        }
+
+        // Load levels on page load
+        fetch('/get_levels')
+            .then(response => response.json())
+            .then(data => {
+                levels = data;
+            })
+            .catch(error => {
+                console.error('Error loading levels:', error);
+                alert('Kunde inte ladda nivåer!');
+            });
+
+        // Load monster sprites
+        fetch('/get_monster_sprites')
+            .then(response => response.json())
+            .then(data => {
+                monsterSprites = data.map(path => {
+                    const img = new Image();
+                    img.onload = () => {
+                        loadedSprites++;
+                        checkSpritesLoaded();
+                    };
+                    img.src = path;
+                    return img;
+                });
+            })
+            .catch(error => {
+                console.error('Error loading monster sprites:', error);
+            });
+
+        // Load leaderboards
+        function loadLeaderboards() {
+            fetch('/get_leaderboard')
+                .then(response => response.json())
+                .then(data => {
+                    updateLeaderboardDisplay('dailyLeaderboard', data.daily);
+                    updateLeaderboardDisplay('allTimeLeaderboard', data.all_time);
+                })
+                .catch(error => {
+                    console.error('Error loading leaderboards:', error);
+                });
+        }
+
+        function updateLeaderboardDisplay(elementId, entries) {
+            const list = document.getElementById(elementId);
+            if (entries.length === 0) {
+                list.innerHTML = '<li style="list-style: none;">Inga resultat än</li>';
+                return;
+            }
+
+            list.innerHTML = entries.map(entry => {
+                const minutes = Math.floor(entry.time / 60);
+                const seconds = entry.time % 60;
+                const timeStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                return `<li>${entry.name} - ${entry.words_collected} ord (${timeStr})</li>`;
+            }).join('');
+        }
+
+        function submitScore() {
+            const name = prompt('Grattis! Skriv in ditt namn för topplistan:', '');
+            if (!name) return;
+
+            const timeSeconds = Math.floor((Date.now() - gameStartTime) / 1000);
+
+            fetch('/submit_score', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    name: name,
+                    words_collected: totalWordsCollected,
+                    time: timeSeconds
+                })
+            })
+            .then(() => {
+                loadLeaderboards();
+            })
+            .catch(error => {
+                console.error('Error submitting score:', error);
+            });
+        }
+
+        // Load leaderboards on page load
+        loadLeaderboards();
+
+        function startGame() {
+            if (levels.length === 0) {
+                alert('Nivåer laddas, vänta ett ögonblick...');
+                return;
+            }
+
+            currentLevel = 0;
+            totalWordsCollected = 0;
+            gameStartTime = Date.now();
+
+            // Start timer
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(updateTimer, 100);
+
+            loadLevel(currentLevel);
+        }
+
+        function updateTimer() {
+            if (!gameOver) {
+                const elapsed = Math.floor((Date.now() - gameStartTime) / 1000);
+                const minutes = Math.floor(elapsed / 60);
+                const seconds = elapsed % 60;
+                document.getElementById('timer').textContent =
+                    `Tid: ${minutes}:${seconds.toString().padStart(2, '0')}`;
+                document.getElementById('score').textContent =
+                    `Ord: ${totalWordsCollected}`;
+            }
+        }
+
+        function loadLevel(levelIndex) {
+            if (levelIndex >= levels.length) {
+                // All levels completed!
+                document.getElementById('startScreen').style.display = 'flex';
+                document.getElementById('gameContainer').style.display = 'none';
+                alert('🎉 Grattis! Du klarade alla nivåer!');
+                return;
+            }
+
+            const level = levels[levelIndex];
+            const wordsText = level.text;
+
+            // Remove punctuation and split by whitespace, preserve order
+            const wordSequence = wordsText
+                .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, '')
+                .split(/\s+/)
+                .map(w => w.trim().toUpperCase())
+                .filter(w => w.length > 0);
+
+            // Get unique words for maze generation
+            const uniqueWords = [...new Set(wordSequence)];
+
+            fetch('/generate_maze', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    words: uniqueWords,
+                    word_sequence: wordSequence,
+                    width: 24,
+                    height: 16
+                }),
+            })
+            .then(response => response.json())
+            .then(data => {
+                maze = data;
+                initGame();
+                document.getElementById('startScreen').style.display = 'none';
+                document.getElementById('gameContainer').style.display = 'flex';
+                gameLoop();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('Något gick fel vid generering av labyrinten!');
+            });
+        }
+
+        function initGame() {
+            player = {
+                x: maze.start.x,
+                y: maze.start.y,
+                targetX: maze.start.x,
+                targetY: maze.start.y,
+                displayX: maze.start.x,
+                displayY: maze.start.y
+            };
+
+            monsters = maze.monsters.map(m => {
+                // Assign random monster sprite
+                const spriteIndex = Math.floor(Math.random() * monsterSprites.length);
+                return {
+                    x: m.x,
+                    y: m.y,
+                    targetX: m.x,
+                    targetY: m.y,
+                    displayX: m.x,
+                    displayY: m.y,
+                    direction: m.direction,
+                    steps: m.steps,
+                    stepsRemaining: m.steps,
+                    sprite: monsterSprites[spriteIndex]
+                };
+            });
+
+            collectedWords = [];
+            currentWordIndex = 0;
+            gameOver = false;
+            won = false;
+            animationProgress = 0;
+            isAnimating = false;
+            updateStatus();
+        }
+
+        function updateStatus() {
+            const statusDiv = document.getElementById('status');
+            if (gameOver) return;
+
+            if (currentWordIndex < maze.word_sequence.length) {
+                const nextWord = maze.word_sequence[currentWordIndex];
+                statusDiv.textContent = `Nästa ord: ${nextWord} (${currentWordIndex + 1}/${maze.word_sequence.length})`;
+                statusDiv.className = '';
+            } else {
+                statusDiv.textContent = `Alla ord samlade! Gå till målet! 🎯`;
+                statusDiv.className = 'win';
+            }
+        }
+
+        function restartGame() {
+            document.getElementById('startScreen').style.display = 'block';
+            document.getElementById('gameContainer').style.display = 'none';
+        }
+
+        function wrapText(text, charsPerLine) {
+            // Truncate to max 15 characters (3 lines * 5 chars)
+            const truncated = text.substring(0, charsPerLine * 3);
+            const lines = [];
+
+            // Break into lines of 5 characters each
+            for (let i = 0; i < truncated.length; i += charsPerLine) {
+                lines.push(truncated.substring(i, i + charsPerLine));
+            }
+
+            return lines;
+        }
+
+        function drawGame() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Draw maze
+            for (let y = 0; y < maze.height; y++) {
+                for (let x = 0; x < maze.width; x++) {
+                    const word = maze.grid[y][x];
+
+                    if (word) {
+                        // Wall (word)
+                        ctx.fillStyle = '#e94560';
+                        ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+
+                        // Draw word with wrapping (5 chars per line, max 3 lines)
+                        ctx.fillStyle = '#fff';
+                        ctx.font = 'bold 12px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+
+                        const lines = wrapText(word, 5);
+                        const lineHeight = 14;
+                        const totalHeight = lines.length * lineHeight;
+                        const startY = y * cellSize + cellSize / 2 - totalHeight / 2 + lineHeight / 2;
+
+                        lines.forEach((line, i) => {
+                            ctx.fillText(line, x * cellSize + cellSize / 2, startY + i * lineHeight);
+                        });
+                    } else {
+                        // Path
+                        ctx.fillStyle = '#0f3460';
+                        ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                    }
+
+                    // Grid lines
+                    ctx.strokeStyle = '#1a1a2e';
+                    ctx.strokeRect(x * cellSize, y * cellSize, cellSize, cellSize);
+                }
+            }
+
+            // Draw end zone (goal sprite)
+            const goalX = maze.end.x * cellSize;
+            const goalY = maze.end.y * cellSize;
+            if (spritesLoaded && goalSprite.complete) {
+                ctx.drawImage(goalSprite, goalX + 5, goalY + 5, cellSize - 10, cellSize - 10);
+            } else {
+                // Fallback to rectangle
+                ctx.fillStyle = '#4caf50';
+                ctx.fillRect(goalX + 5, goalY + 5, cellSize - 10, cellSize - 10);
+            }
+
+            // Draw monsters with smooth movement
+            monsters.forEach(monster => {
+                const drawX = monster.displayX * cellSize;
+                const drawY = monster.displayY * cellSize;
+
+                if (spritesLoaded && monster.sprite && monster.sprite.complete) {
+                    ctx.drawImage(monster.sprite, drawX + 8, drawY + 8, cellSize - 16, cellSize - 16);
+                } else {
+                    // Fallback to rectangle
+                    ctx.fillStyle = '#ff6b6b';
+                    ctx.fillRect(drawX + 8, drawY + 8, cellSize - 16, cellSize - 16);
+
+                    // Eyes
+                    ctx.fillStyle = '#fff';
+                    ctx.fillRect(drawX + 12, drawY + 12, 8, 8);
+                    ctx.fillRect(drawX + 28, drawY + 12, 8, 8);
+                }
+            });
+
+            // Draw player with smooth movement
+            const drawX = player.displayX * cellSize;
+            const drawY = player.displayY * cellSize;
+
+            if (spritesLoaded && playerSprite.complete) {
+                ctx.drawImage(playerSprite, drawX + 5, drawY + 5, cellSize - 10, cellSize - 10);
+            } else {
+                // Fallback to rectangle
+                ctx.fillStyle = '#3498db';
+                ctx.fillRect(drawX + 5, drawY + 5, cellSize - 10, cellSize - 10);
+
+                // Player eyes
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(drawX + 12, drawY + 12, 10, 10);
+                ctx.fillRect(drawX + 28, drawY + 12, 10, 10);
+            }
+
+            // Draw collected words below the maze, aligned with status text
+            const mazeHeight = maze.height * cellSize;
+            if (collectedWords.length > 0) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                const collectedText = 'Samlade ord: ' + collectedWords.join(' ');
+                ctx.fillText(collectedText, 10, mazeHeight + 20);
+            }
+
+            // Draw level reference at bottom right
+            if (levels[currentLevel]) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'top';
+                const levelText = `Level ${currentLevel + 1}: ${levels[currentLevel].ref}`;
+                ctx.fillText(levelText, canvas.width - 10, mazeHeight + 20);
+            }
+        }
+
+        function moveMonsters() {
+            monsters.forEach(monster => {
+                monster.stepsRemaining--;
+
+                if (monster.stepsRemaining <= 0) {
+                    // Change direction
+                    const directions = ['up', 'down', 'left', 'right'];
+                    monster.direction = directions[Math.floor(Math.random() * directions.length)];
+                    monster.stepsRemaining = monster.steps;
+                }
+
+                // Try to move
+                let newX = monster.x;
+                let newY = monster.y;
+
+                switch (monster.direction) {
+                    case 'up': newY--; break;
+                    case 'down': newY++; break;
+                    case 'left': newX--; break;
+                    case 'right': newX++; break;
+                }
+
+                // Check if valid move
+                if (newX >= 0 && newX < maze.width && newY >= 0 && newY < maze.height && !maze.grid[newY][newX]) {
+                    monster.targetX = newX;
+                    monster.targetY = newY;
+                    monster.x = newX;
+                    monster.y = newY;
+                } else {
+                    // Hit wall, change direction
+                    monster.stepsRemaining = 0;
+                }
+            });
+        }
+
+        function updateAnimations() {
+            const animationSpeed = 0.2;
+
+            // Animate player
+            if (player.displayX !== player.targetX || player.displayY !== player.targetY) {
+                player.displayX += (player.targetX - player.displayX) * animationSpeed;
+                player.displayY += (player.targetY - player.displayY) * animationSpeed;
+
+                if (Math.abs(player.targetX - player.displayX) < 0.01) player.displayX = player.targetX;
+                if (Math.abs(player.targetY - player.displayY) < 0.01) player.displayY = player.targetY;
+            }
+
+            // Animate monsters
+            monsters.forEach(monster => {
+                if (monster.displayX !== monster.targetX || monster.displayY !== monster.targetY) {
+                    monster.displayX += (monster.targetX - monster.displayX) * animationSpeed;
+                    monster.displayY += (monster.targetY - monster.displayY) * animationSpeed;
+
+                    if (Math.abs(monster.targetX - monster.displayX) < 0.01) monster.displayX = monster.targetX;
+                    if (Math.abs(monster.targetY - monster.displayY) < 0.01) monster.displayY = monster.targetY;
+                }
+            });
+        }
+
+        function spawnMonster() {
+            // Find path cells at least 5 tiles away from player
+            const pathCells = [];
+            for (let y = 0; y < maze.height; y++) {
+                for (let x = 0; x < maze.width; x++) {
+                    if (!maze.grid[y][x]) {
+                        const dist = Math.abs(x - player.x) + Math.abs(y - player.y);
+                        if (dist >= 5) {
+                            pathCells.push({x, y});
+                        }
+                    }
+                }
+            }
+
+            if (pathCells.length > 0 && monsterSprites.length > 0) {
+                const pos = pathCells[Math.floor(Math.random() * pathCells.length)];
+                const spriteIndex = Math.floor(Math.random() * monsterSprites.length);
+                monsters.push({
+                    x: pos.x,
+                    y: pos.y,
+                    targetX: pos.x,
+                    targetY: pos.y,
+                    displayX: pos.x,
+                    displayY: pos.y,
+                    direction: ['up', 'down', 'left', 'right'][Math.floor(Math.random() * 4)],
+                    steps: Math.floor(Math.random() * 5) + 3,
+                    stepsRemaining: Math.floor(Math.random() * 5) + 3,
+                    sprite: monsterSprites[spriteIndex]
+                });
+            }
+        }
+
+        function checkCollision() {
+            // Check monster collision
+            for (let monster of monsters) {
+                if (monster.x === player.x && monster.y === player.y) {
+                    gameOver = true;
+                    if (timerInterval) clearInterval(timerInterval);
+                    document.getElementById('status').textContent = '💀 Du blev fångad! Försök igen!';
+                    document.getElementById('status').className = 'lose';
+
+                    // Submit score even when dying
+                    setTimeout(() => {
+                        submitScore();
+                    }, 1000);
+                    return;
+                }
+            }
+
+            // Check win condition - only if all words collected
+            if (player.x === maze.end.x && player.y === maze.end.y) {
+                if (currentWordIndex >= maze.word_sequence.length) {
+                    gameOver = true;
+                    won = true;
+
+                    // Check if there are more levels
+                    if (currentLevel < levels.length - 1) {
+                        document.getElementById('status').textContent = `🎉 Level ${currentLevel + 1} klarat!`;
+                        document.getElementById('status').className = 'win';
+
+                        // Load next level after a short delay
+                        setTimeout(() => {
+                            currentLevel++;
+                            loadLevel(currentLevel);
+                        }, 2000);
+                    } else {
+                        // All levels completed!
+                        if (timerInterval) clearInterval(timerInterval);
+                        document.getElementById('status').textContent = '🎉 Grattis! Alla nivåer klarade!';
+                        document.getElementById('status').className = 'win';
+
+                        // Submit score
+                        setTimeout(() => {
+                            submitScore();
+                        }, 1000);
+                    }
+                }
+            }
+        }
+
+        let lastMonsterMove = 0;
+        const monsterMoveInterval = 300; // milliseconds
+
+        function gameLoop(timestamp = 0) {
+            if (!gameOver) {
+                if (timestamp - lastMonsterMove > monsterMoveInterval) {
+                    moveMonsters();
+                    checkCollision();
+                    lastMonsterMove = timestamp;
+                }
+
+                updateAnimations();
+                drawGame();
+                requestAnimationFrame(gameLoop);
+            } else {
+                drawGame();
+            }
+        }
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            if (gameOver) return;
+
+            let newX = player.x;
+            let newY = player.y;
+
+            switch (e.key) {
+                case 'ArrowUp':
+                    newY--;
+                    e.preventDefault();
+                    break;
+                case 'ArrowDown':
+                    newY++;
+                    e.preventDefault();
+                    break;
+                case 'ArrowLeft':
+                    newX--;
+                    e.preventDefault();
+                    break;
+                case 'ArrowRight':
+                    newX++;
+                    e.preventDefault();
+                    break;
+                default:
+                    return;
+            }
+
+            // Check bounds
+            if (newX < 0 || newX >= maze.width || newY < 0 || newY >= maze.height) {
+                return;
+            }
+
+            const cellContent = maze.grid[newY][newX];
+
+            // Check if it's a wall with a word
+            if (cellContent) {
+                // Check if it's the next word in sequence
+                if (currentWordIndex < maze.word_sequence.length &&
+                    cellContent === maze.word_sequence[currentWordIndex]) {
+                    // Correct word! Remove the wall
+                    maze.grid[newY][newX] = null;
+                    collectedWords.push(cellContent);
+                    currentWordIndex++;
+                    totalWordsCollected++;
+
+                    // Spawn new monster
+                    spawnMonster();
+
+                    // Move to the now-open cell
+                    player.x = newX;
+                    player.y = newY;
+                    player.targetX = newX;
+                    player.targetY = newY;
+
+                    updateStatus();
+                    checkCollision();
+                }
+                // Wrong word or not a wall - can't move
+                return;
+            }
+
+            // It's a path - move normally
+            player.x = newX;
+            player.y = newY;
+            player.targetX = newX;
+            player.targetY = newY;
+            checkCollision();
+        });
+    </script>
+</body>
+</html>

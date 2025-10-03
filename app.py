@@ -3,13 +3,50 @@ import random
 import json
 import os
 from datetime import datetime
-from threading import Lock
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 
-# Thread-safe lock for leaderboard file access
-leaderboard_lock = Lock()
-LEADERBOARD_FILE = 'leaderboard.json'
+# Database connection
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:5N!u_CBidqhME3A@db.uteqluwrvccmyqucvset.supabase.co:5432/postgres')
+
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+
+def init_db():
+    """Initialize database tables"""
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS leaderboard (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(20) NOT NULL,
+            words_collected INTEGER NOT NULL,
+            time INTEGER NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            date DATE DEFAULT CURRENT_DATE
+        )
+    ''')
+
+    cur.execute('''
+        CREATE INDEX IF NOT EXISTS idx_date ON leaderboard(date);
+    ''')
+
+    cur.execute('''
+        CREATE INDEX IF NOT EXISTS idx_all_time ON leaderboard(words_collected DESC, time ASC);
+    ''')
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+# Initialize database on startup
+try:
+    init_db()
+except Exception as e:
+    print(f"Database initialization error: {e}")
 
 @app.route('/')
 def index():
@@ -34,37 +71,38 @@ def get_monster_sprites():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-def load_leaderboard():
-    """Thread-safe leaderboard loading"""
-    with leaderboard_lock:
-        try:
-            with open(LEADERBOARD_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return {'all_time': [], 'daily': {}}
-
-def save_leaderboard(data):
-    """Thread-safe leaderboard saving"""
-    with leaderboard_lock:
-        with open(LEADERBOARD_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-
 @app.route('/get_leaderboard', methods=['GET'])
 def get_leaderboard():
     try:
-        data = load_leaderboard()
-        today = datetime.now().strftime('%Y-%m-%d')
+        conn = get_db_connection()
+        cur = conn.cursor()
 
         # Get today's leaderboard
-        daily = data['daily'].get(today, [])
+        today = datetime.now().date()
+        cur.execute('''
+            SELECT name, words_collected, time
+            FROM leaderboard
+            WHERE date = %s
+            ORDER BY words_collected DESC, time ASC
+            LIMIT 10
+        ''', (today,))
+        daily = cur.fetchall()
 
-        # Sort: first by words collected (desc), then by time (asc)
-        daily_sorted = sorted(daily, key=lambda x: (-x['words_collected'], x['time']))[:10]
-        all_time_sorted = sorted(data['all_time'], key=lambda x: (-x['words_collected'], x['time']))[:10]
+        # Get all-time leaderboard
+        cur.execute('''
+            SELECT name, words_collected, time
+            FROM leaderboard
+            ORDER BY words_collected DESC, time ASC
+            LIMIT 10
+        ''')
+        all_time = cur.fetchall()
+
+        cur.close()
+        conn.close()
 
         return jsonify({
-            'daily': daily_sorted,
-            'all_time': all_time_sorted
+            'daily': daily,
+            'all_time': all_time
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -73,35 +111,21 @@ def get_leaderboard():
 def submit_score():
     try:
         score_data = request.json
-        name = score_data.get('name', 'Anonymous')[:20]  # Max 20 chars
+        name = score_data.get('name', 'Anonymous')[:20]
         words_collected = score_data.get('words_collected', 0)
         time_seconds = score_data.get('time', 0)
 
-        today = datetime.now().strftime('%Y-%m-%d')
+        conn = get_db_connection()
+        cur = conn.cursor()
 
-        entry = {
-            'name': name,
-            'words_collected': words_collected,
-            'time': time_seconds,
-            'timestamp': datetime.now().isoformat()
-        }
+        cur.execute('''
+            INSERT INTO leaderboard (name, words_collected, time)
+            VALUES (%s, %s, %s)
+        ''', (name, words_collected, time_seconds))
 
-        data = load_leaderboard()
-
-        # Add to all-time
-        data['all_time'].append(entry)
-
-        # Add to daily
-        if today not in data['daily']:
-            data['daily'][today] = []
-        data['daily'][today].append(entry)
-
-        # Clean up old daily entries (keep last 7 days)
-        dates = sorted(data['daily'].keys(), reverse=True)
-        for old_date in dates[7:]:
-            del data['daily'][old_date]
-
-        save_leaderboard(data)
+        conn.commit()
+        cur.close()
+        conn.close()
 
         return jsonify({'success': True})
     except Exception as e:

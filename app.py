@@ -9,7 +9,7 @@ from psycopg2.extras import RealDictCursor
 app = Flask(__name__)
 
 # Database connection
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres:5N!u_CBidqhME3A@db.uteqluwrvccmyqucvset.supabase.co:5432/postgres')
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://postgres.uteqluwrvccmyqucvset:5N!u_CBidqhME3A@aws-1-eu-north-1.pooler.supabase.com:6543/postgres')
 
 def get_db_connection():
     return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
